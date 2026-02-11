@@ -145,6 +145,16 @@ tr.task-done td.col-name { text-decoration: line-through; }
 
 /* ローディング */
 .loading { text-align: center; padding: 40px; color: #888; }
+
+/* ドラッグ&ドロップ */
+.drag-handle {
+  cursor: grab; color: #aaa; font-size: 16px; user-select: none;
+  padding: 0 4px; display: inline-block;
+}
+.drag-handle:hover { color: #666; }
+.drag-handle:active { cursor: grabbing; }
+tr.dragging { opacity: 0.4; background: #e3f2fd !important; }
+tr.drag-over td { border-top: 3px solid #1976d2 !important; }
 </style>
 </head>
 <body>
@@ -497,6 +507,7 @@ tr.task-done td.col-name { text-decoration: line-through; }
       .from('tasks')
       .select('*')
       .eq('user_id', currentUser.id)
+      .order('sort_order')
       .order('created_at');
 
     if (error) { console.error('Load error:', error); return []; }
@@ -507,7 +518,8 @@ tr.task-done td.col-name { text-decoration: line-through; }
       dueType: row.due_type,
       dueValue: row.due_value,
       holidayShift: row.holiday_shift,
-      completions: row.completions || {}
+      completions: row.completions || {},
+      sortOrder: row.sort_order || 0
     }));
   }
 
@@ -519,7 +531,8 @@ tr.task-done td.col-name { text-decoration: line-through; }
       due_type: task.dueType,
       due_value: task.dueValue,
       holiday_shift: task.holidayShift,
-      completions: task.completions || {}
+      completions: task.completions || {},
+      sort_order: task.sortOrder || 0
     });
     if (error) console.error('Insert error:', error);
   }
@@ -533,6 +546,14 @@ tr.task-done td.col-name { text-decoration: line-through; }
       completions: task.completions || {}
     }).eq('id', task.id).eq('user_id', currentUser.id);
     if (error) console.error('Update error:', error);
+  }
+
+  async function saveTaskOrder() {
+    for (let i = 0; i < tasks.length; i++) {
+      tasks[i].sortOrder = i;
+      await supabase.from('tasks').update({ sort_order: i })
+        .eq('id', tasks[i].id).eq('user_id', currentUser.id);
+    }
   }
 
   async function deleteTaskFromDB(taskId) {
@@ -678,8 +699,8 @@ tr.task-done td.col-name { text-decoration: line-through; }
         ? `${dueDate.getMonth() + 1}/${dueDate.getDate()}`
         : '-';
 
-      bodyHtml += `<tr${isDone ? ' class="task-done"' : ''}>`;
-      bodyHtml += `<td class="col-name">${escapeHtml(task.name)}</td>`;
+      bodyHtml += `<tr draggable="true" data-task-id="${task.id}"${isDone ? ' class="task-done"' : ''}>`;
+      bodyHtml += `<td class="col-name"><span class="drag-handle">&#9776;</span> ${escapeHtml(task.name)}</td>`;
       bodyHtml += `<td class="col-due">${dueDateDisplay}</td>`;
       bodyHtml += `<td class="${remainingCls}">${remaining}</td>`;
       bodyHtml += `<td><button class="action-btn" onclick="app.editTask('${task.id}')">編集</button><button class="action-btn delete" onclick="app.deleteTask('${task.id}')">削除</button></td>`;
@@ -705,6 +726,59 @@ tr.task-done td.col-name { text-decoration: line-through; }
       bodyHtml += '</tr>';
     }
     $tableBody.innerHTML = bodyHtml;
+    setupDragAndDrop();
+  }
+
+  // ========== ドラッグ&ドロップ ==========
+  let dragSrcRow = null;
+
+  function setupDragAndDrop() {
+    const rows = $tableBody.querySelectorAll('tr[draggable]');
+    rows.forEach(row => {
+      row.addEventListener('dragstart', (e) => {
+        dragSrcRow = row;
+        row.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', row.dataset.taskId);
+      });
+
+      row.addEventListener('dragend', () => {
+        row.classList.remove('dragging');
+        rows.forEach(r => r.classList.remove('drag-over'));
+        dragSrcRow = null;
+      });
+
+      row.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (row !== dragSrcRow) {
+          rows.forEach(r => r.classList.remove('drag-over'));
+          row.classList.add('drag-over');
+        }
+      });
+
+      row.addEventListener('dragleave', () => {
+        row.classList.remove('drag-over');
+      });
+
+      row.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        rows.forEach(r => r.classList.remove('drag-over'));
+        if (!dragSrcRow || row === dragSrcRow) return;
+
+        const fromId = dragSrcRow.dataset.taskId;
+        const toId = row.dataset.taskId;
+        const fromIdx = tasks.findIndex(t => t.id === fromId);
+        const toIdx = tasks.findIndex(t => t.id === toId);
+        if (fromIdx === -1 || toIdx === -1) return;
+
+        const [moved] = tasks.splice(fromIdx, 1);
+        tasks.splice(toIdx, 0, moved);
+
+        renderTable();
+        await saveTaskOrder();
+      });
+    });
   }
 
   function escapeHtml(str) {
@@ -798,7 +872,8 @@ tr.task-done td.col-name { text-decoration: line-through; }
         dueType: $dueType.value,
         dueValue,
         holidayShift: $holidayShift.value,
-        completions: {}
+        completions: {},
+        sortOrder: tasks.length
       };
       tasks.push(newTask);
       await insertTask(newTask);
