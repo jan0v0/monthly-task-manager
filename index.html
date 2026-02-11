@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>月次タスク管理</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'Meiryo', sans-serif; background: #f5f5f5; color: #333; }
+
+header {
+  background: #1976d2; color: #fff; padding: 12px 20px;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+header h1 { font-size: 20px; white-space: nowrap; }
+.month-nav { display: flex; align-items: center; gap: 8px; }
+.month-nav button {
+  background: rgba(255,255,255,0.2); border: none; color: #fff;
+  padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 14px;
+}
+.month-nav button:hover { background: rgba(255,255,255,0.35); }
+#current-month { font-size: 18px; font-weight: bold; min-width: 120px; text-align: center; }
+#add-task-btn {
+  margin-left: auto; background: #ff9800; border: none; color: #fff;
+  padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;
+}
+#add-task-btn:hover { background: #f57c00; }
+
+.table-wrapper { overflow-x: auto; padding: 16px; }
+table {
+  border-collapse: collapse; width: 100%; min-width: 900px;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+th, td {
+  border: 1px solid #ddd; padding: 4px 6px; text-align: center;
+  font-size: 13px; white-space: nowrap;
+}
+thead th { background: #e3f2fd; position: sticky; top: 0; z-index: 2; }
+th.col-name, td.col-name { min-width: 180px; text-align: left; position: sticky; left: 0; z-index: 3; background: #e3f2fd; }
+td.col-name { background: #fff; z-index: 1; }
+th.col-due, th.col-remaining, th.col-actions { min-width: 70px; }
+th.col-day { min-width: 32px; width: 32px; font-size: 12px; }
+
+.day-sub { display: block; font-size: 10px; font-weight: normal; color: #666; }
+
+.sat { background-color: #e8f4fd !important; }
+.sun, .holiday { background-color: #fde8e8 !important; }
+.today-col { border-bottom: 3px solid #1976d2; }
+.due-cell { background-color: #fff3cd !important; outline: 2px solid #ffc107; outline-offset: -2px; }
+.completed-cell { background-color: #c8e6c9 !important; cursor: pointer; }
+.completed-cell::after { content: '\2713'; color: #2e7d32; font-weight: bold; }
+td.day-cell { cursor: pointer; height: 28px; }
+td.day-cell:hover { background-color: #e0e0e0; }
+
+.overdue { color: #d32f2f; font-weight: bold; }
+.remaining-ok { color: #2e7d32; font-weight: bold; }
+.remaining-warn { color: #f57c00; font-weight: bold; }
+
+.action-btn {
+  background: none; border: 1px solid #999; border-radius: 3px;
+  padding: 2px 6px; cursor: pointer; font-size: 11px; margin: 0 2px;
+}
+.action-btn:hover { background: #eee; }
+.action-btn.delete { color: #d32f2f; border-color: #d32f2f; }
+.action-btn.delete:hover { background: #fde8e8; }
+
+/* モーダル */
+.modal-overlay {
+  display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;
+}
+.modal-overlay.active { display: flex; }
+.modal {
+  background: #fff; border-radius: 8px; padding: 24px; width: 400px; max-width: 90%;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.modal h2 { margin-bottom: 16px; font-size: 18px; }
+.modal label { display: block; margin-bottom: 12px; font-size: 14px; }
+.modal input, .modal select {
+  width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;
+  font-size: 14px; margin-top: 4px;
+}
+.modal-buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+.modal-buttons button {
+  padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;
+}
+#save-task-btn { background: #1976d2; color: #fff; }
+#save-task-btn:hover { background: #1565c0; }
+#cancel-task-btn { background: #e0e0e0; }
+#cancel-task-btn:hover { background: #bdbdbd; }
+
+.holiday-label {
+  font-size: 9px; display: block; color: #d32f2f; max-width: 32px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+
+.empty-msg { text-align: center; padding: 40px; color: #999; font-size: 16px; }
+
+/* 完了タスク行のグレーアウト */
+tr.task-done { opacity: 0.45; }
+tr.task-done td.col-name { text-decoration: line-through; }
+.status-done { color: #4caf50; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>月次タスク管理</h1>
+  <div class="month-nav">
+    <button id="prev-month-btn">&#9664;</button>
+    <span id="current-month"></span>
+    <button id="next-month-btn">&#9654;</button>
+    <button id="today-btn">今月</button>
+  </div>
+  <button id="add-task-btn">＋ タスク追加</button>
+  <div style="display:flex;gap:4px;margin-left:8px;">
+    <button id="export-btn" class="month-nav" style="background:rgba(255,255,255,0.2);border:none;color:#fff;padding:6px 10px;border-radius:4px;cursor:pointer;font-size:12px;">エクスポート</button>
+    <label style="background:rgba(255,255,255,0.2);border:none;color:#fff;padding:6px 10px;border-radius:4px;cursor:pointer;font-size:12px;">インポート<input type="file" id="import-file" accept=".json" style="display:none;"></label>
+  </div>
+</header>
+
+<div class="table-wrapper">
+  <table id="task-table">
+    <thead id="table-head"></thead>
+    <tbody id="table-body"></tbody>
+  </table>
+  <div id="empty-msg" class="empty-msg" style="display:none;">
+    タスクがありません。「＋ タスク追加」ボタンからタスクを登録してください。
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <h2 id="modal-title">タスク追加</h2>
+    <label>タスク名
+      <input type="text" id="task-name" placeholder="例: 月次レポート提出">
+    </label>
+    <label>期限タイプ
+      <select id="due-type">
+        <option value="date">日付指定（例: 毎月15日）</option>
+        <option value="businessDay">営業日指定（例: 第5営業日）</option>
+      </select>
+    </label>
+    <label id="due-value-label">日付（1～31）
+      <input type="number" id="due-value" min="1" max="31" value="1">
+    </label>
+    <label id="holiday-shift-label">休日・祝日の場合
+      <select id="holiday-shift">
+        <option value="before">前営業日に繰り上げ</option>
+        <option value="after">翌営業日に繰り下げ</option>
+      </select>
+    </label>
+    <div class="modal-buttons">
+      <button id="cancel-task-btn">キャンセル</button>
+      <button id="save-task-btn">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ========== 日本の祝日計算 ==========
+  const holidayCache = {};
+
+  function getHolidaysForYear(year) {
+    if (holidayCache[year]) return holidayCache[year];
+
+    const holidays = new Map();
+
+    function addH(m, d, name) {
+      const key = `${year}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      if (!holidays.has(key)) holidays.set(key, name);
+    }
+
+    function nthMonday(month, n) {
+      const first = new Date(year, month - 1, 1);
+      let dow = first.getDay();
+      let day = 1 + ((8 - dow) % 7);
+      day += (n - 1) * 7;
+      return day;
+    }
+
+    // 春分の日
+    function vernalEquinox() {
+      if (year < 1980 || year > 2099) return 20;
+      const y = year - 1980;
+      return Math.floor(20.8431 + 0.242194 * y - Math.floor(y / 4));
+    }
+
+    // 秋分の日
+    function autumnalEquinox() {
+      if (year < 1980 || year > 2099) return 23;
+      const y = year - 1980;
+      return Math.floor(23.2488 + 0.242194 * y - Math.floor(y / 4));
+    }
+
+    // 固定祝日
+    addH(1, 1, '元日');
+    if (year >= 1967) addH(2, 11, '建国記念の日');
+    if (year >= 2020) addH(2, 23, '天皇誕生日');
+    addH(3, vernalEquinox(), '春分の日');
+    if (year >= 2007) addH(4, 29, '昭和の日');
+    else if (year >= 1989) addH(4, 29, 'みどりの日');
+    addH(5, 3, '憲法記念日');
+    if (year >= 2007) addH(5, 4, 'みどりの日');
+    addH(5, 5, 'こどもの日');
+    if (year >= 2016) addH(8, 11, '山の日');
+    addH(9, autumnalEquinox(), '秋分の日');
+    addH(11, 3, '文化の日');
+    addH(11, 23, '勤労感謝の日');
+
+    // ハッピーマンデー
+    if (year >= 2000) addH(1, nthMonday(1, 2), '成人の日');
+    else if (year >= 1949) addH(1, 15, '成人の日');
+
+    if (year >= 2003) addH(7, nthMonday(7, 3), '海の日');
+    else if (year >= 1996) addH(7, 20, '海の日');
+
+    if (year >= 2003) addH(9, nthMonday(9, 3), '敬老の日');
+    else if (year >= 1966) addH(9, 15, '敬老の日');
+
+    if (year >= 2000) addH(10, nthMonday(10, 2), 'スポーツの日');
+    else if (year >= 1966) addH(10, 10, '体育の日');
+
+    // 振替休日
+    const sortedKeys = [...holidays.keys()].sort();
+    for (const key of sortedKeys) {
+      const d = parseDate(key);
+      if (d.getDay() === 0) {
+        let next = new Date(d);
+        next.setDate(next.getDate() + 1);
+        let nextKey = formatDate(next);
+        while (holidays.has(nextKey)) {
+          next.setDate(next.getDate() + 1);
+          nextKey = formatDate(next);
+        }
+        holidays.set(nextKey, '振替休日');
+      }
+    }
+
+    // 国民の休日（祝日に挟まれた平日）
+    const allKeys = [...holidays.keys()].sort();
+    for (let i = 0; i < allKeys.length; i++) {
+      const d1 = parseDate(allKeys[i]);
+      const d2 = new Date(d1);
+      d2.setDate(d2.getDate() + 2);
+      const d2Key = formatDate(d2);
+      if (holidays.has(d2Key)) {
+        const between = new Date(d1);
+        between.setDate(between.getDate() + 1);
+        const betweenKey = formatDate(between);
+        if (!holidays.has(betweenKey) && between.getDay() !== 0) {
+          holidays.set(betweenKey, '国民の休日');
+        }
+      }
+    }
+
+    holidayCache[year] = holidays;
+    return holidays;
+  }
+
+  // ========== 日付ユーティリティ ==========
+  function formatDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${dd}`;
+  }
+
+  function parseDate(s) {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  function getDaysInMonth(year, month) {
+    return new Date(year, month, 0).getDate();
+  }
+
+  function isBusinessDay(date) {
+    const dow = date.getDay();
+    if (dow === 0 || dow === 6) return false;
+    const holidays = getHolidaysForYear(date.getFullYear());
+    return !holidays.has(formatDate(date));
+  }
+
+  function findPrevBusinessDay(date) {
+    const d = new Date(date);
+    d.setDate(d.getDate() - 1);
+    while (!isBusinessDay(d)) d.setDate(d.getDate() - 1);
+    return d;
+  }
+
+  function findNextBusinessDay(date) {
+    const d = new Date(date);
+    d.setDate(d.getDate() + 1);
+    while (!isBusinessDay(d)) d.setDate(d.getDate() + 1);
+    return d;
+  }
+
+  // ========== 期日計算 ==========
+  function calculateDueDate(task, year, month) {
+    if (task.dueType === 'businessDay') {
+      const daysInMonth = getDaysInMonth(year, month);
+      let count = 0;
+      let lastBD = null;
+      for (let day = 1; day <= daysInMonth; day++) {
+        const d = new Date(year, month - 1, day);
+        if (isBusinessDay(d)) {
+          count++;
+          lastBD = d;
+          if (count === task.dueValue) return d;
+        }
+      }
+      return lastBD;
+    }
+
+    // dueType === 'date'
+    const daysInMonth = getDaysInMonth(year, month);
+    const day = Math.min(task.dueValue, daysInMonth);
+    const candidate = new Date(year, month - 1, day);
+
+    if (isBusinessDay(candidate)) return candidate;
+
+    if (task.holidayShift === 'before') {
+      const shifted = findPrevBusinessDay(candidate);
+      if (shifted.getMonth() !== month - 1) return candidate;
+      return shifted;
+    } else {
+      const shifted = findNextBusinessDay(candidate);
+      if (shifted.getMonth() !== month - 1) return candidate;
+      return shifted;
+    }
+  }
+
+  function calculateDaysRemaining(dueDate) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(dueDate);
+    due.setHours(0, 0, 0, 0);
+    return Math.ceil((due - today) / (1000 * 60 * 60 * 24));
+  }
+
+  // ========== データ保存（localStorage） ==========
+  const STORAGE_KEY = 'monthly-task-manager';
+
+  function loadTasks() {
+    try {
+      const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      return (data && data.tasks) || [];
+    } catch { return []; }
+  }
+
+  function saveTasks(taskList) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ tasks: taskList }));
+  }
+
+  // JSONエクスポート/インポート（バックアップ用）
+  function exportData() {
+    const blob = new Blob([JSON.stringify({ tasks }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'tasks-backup.json'; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importData(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (data && Array.isArray(data.tasks)) {
+          tasks = data.tasks;
+          saveTasks(tasks);
+          renderTable();
+          alert('インポート完了');
+        } else { alert('無効なデータ形式です'); }
+      } catch { alert('ファイルの読み込みに失敗しました'); }
+    };
+    reader.readAsText(file);
+  }
+
+  // ========== アプリ状態 ==========
+  let currentYear, currentMonth, tasks = [];
+  let editingTaskId = null;
+
+  const today = new Date();
+  currentYear = today.getFullYear();
+  currentMonth = today.getMonth() + 1;
+
+  const DAY_NAMES = ['日', '月', '火', '水', '木', '金', '土'];
+
+  // ========== DOM参照 ==========
+  const $currentMonth = document.getElementById('current-month');
+  const $tableHead = document.getElementById('table-head');
+  const $tableBody = document.getElementById('table-body');
+  const $emptyMsg = document.getElementById('empty-msg');
+  const $modalOverlay = document.getElementById('modal-overlay');
+  const $modalTitle = document.getElementById('modal-title');
+  const $taskName = document.getElementById('task-name');
+  const $dueType = document.getElementById('due-type');
+  const $dueValue = document.getElementById('due-value');
+  const $dueValueLabel = document.getElementById('due-value-label');
+  const $holidayShift = document.getElementById('holiday-shift');
+  const $holidayShiftLabel = document.getElementById('holiday-shift-label');
+
+  // ========== 描画 ==========
+  function renderMonthLabel() {
+    $currentMonth.textContent = `${currentYear}年${currentMonth}月`;
+  }
+
+  function renderTable() {
+    const daysInMonth = getDaysInMonth(currentYear, currentMonth);
+    const holidays = getHolidaysForYear(currentYear);
+    const todayStr = formatDate(new Date());
+    const todayDate = new Date();
+    todayDate.setHours(0, 0, 0, 0);
+
+    // ヘッダー
+    let headHtml = '<tr>';
+    headHtml += '<th class="col-name">タスク名</th>';
+    headHtml += '<th class="col-due">期限日</th>';
+    headHtml += '<th class="col-remaining">残り日数</th>';
+    headHtml += '<th class="col-actions">操作</th>';
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = new Date(currentYear, currentMonth - 1, d);
+      const dow = date.getDay();
+      const dateStr = formatDate(date);
+      const holidayName = holidays.get(dateStr);
+
+      let cls = 'col-day';
+      if (dow === 6) cls += ' sat';
+      if (dow === 0) cls += ' sun';
+      if (holidayName) cls += ' holiday';
+      if (dateStr === todayStr) cls += ' today-col';
+
+      headHtml += `<th class="${cls}">${d}<span class="day-sub">${DAY_NAMES[dow]}</span>`;
+      if (holidayName) headHtml += `<span class="holiday-label" title="${holidayName}">${holidayName}</span>`;
+      headHtml += '</th>';
+    }
+    headHtml += '</tr>';
+    $tableHead.innerHTML = headHtml;
+
+    // ボディ
+    if (tasks.length === 0) {
+      $tableBody.innerHTML = '';
+      $emptyMsg.style.display = 'block';
+      return;
+    }
+    $emptyMsg.style.display = 'none';
+
+    let bodyHtml = '';
+    for (const task of tasks) {
+      const dueDate = calculateDueDate(task, currentYear, currentMonth);
+      const dueDateStr = dueDate ? formatDate(dueDate) : '';
+      const dueDay = dueDate ? dueDate.getDate() : -1;
+
+      // 当月中のいずれかの日付が完了済みかチェック
+      let isDone = false;
+      if (task.completions) {
+        const monthPrefix = `${currentYear}-${String(currentMonth).padStart(2,'0')}-`;
+        isDone = Object.keys(task.completions).some(k => k.startsWith(monthPrefix));
+      }
+
+      let remaining = '';
+      let remainingCls = '';
+      if (isDone) {
+        remaining = '完了';
+        remainingCls = 'status-done';
+      } else if (dueDate) {
+        const days = calculateDaysRemaining(dueDate);
+        remaining = days > 0 ? `${days}日` : days === 0 ? '今日' : `${days}日`;
+        if (days < 0) remainingCls = 'overdue';
+        else if (days <= 3) remainingCls = 'remaining-warn';
+        else remainingCls = 'remaining-ok';
+      }
+
+      const dueDateDisplay = dueDate
+        ? `${dueDate.getMonth() + 1}/${dueDate.getDate()}`
+        : '-';
+
+      bodyHtml += `<tr${isDone ? ' class="task-done"' : ''}>`;
+      bodyHtml += `<td class="col-name">${escapeHtml(task.name)}</td>`;
+      bodyHtml += `<td class="col-due">${dueDateDisplay}</td>`;
+      bodyHtml += `<td class="${remainingCls}">${remaining}</td>`;
+      bodyHtml += `<td><button class="action-btn" onclick="app.editTask('${task.id}')">編集</button><button class="action-btn delete" onclick="app.deleteTask('${task.id}')">削除</button></td>`;
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const date = new Date(currentYear, currentMonth - 1, d);
+        const dow = date.getDay();
+        const dateStr = formatDate(date);
+        const holidayName = holidays.get(dateStr);
+        const isCompleted = task.completions && task.completions[dateStr];
+
+        let cls = 'day-cell';
+        if (dow === 6) cls += ' sat';
+        if (dow === 0) cls += ' sun';
+        if (holidayName) cls += ' holiday';
+        if (dateStr === todayStr) cls += ' today-col';
+        if (d === dueDay) cls += ' due-cell';
+        if (isCompleted) cls += ' completed-cell';
+
+        bodyHtml += `<td class="${cls}" onclick="app.toggleCompletion('${task.id}','${dateStr}')" title="${dateStr}${holidayName ? ' ' + holidayName : ''}"></td>`;
+      }
+
+      bodyHtml += '</tr>';
+    }
+    $tableBody.innerHTML = bodyHtml;
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // ========== モーダル ==========
+  function updateModalFields() {
+    if ($dueType.value === 'businessDay') {
+      $dueValueLabel.firstChild.textContent = '第N営業日（1～）';
+      $dueValue.max = 99;
+      $holidayShiftLabel.style.display = 'none';
+    } else {
+      $dueValueLabel.firstChild.textContent = '日付（1～31）';
+      $dueValue.max = 31;
+      $holidayShiftLabel.style.display = 'block';
+    }
+  }
+
+  function showModal(task) {
+    editingTaskId = task ? task.id : null;
+    $modalTitle.textContent = task ? 'タスク編集' : 'タスク追加';
+    $taskName.value = task ? task.name : '';
+    $dueType.value = task ? task.dueType : 'date';
+    $dueValue.value = task ? task.dueValue : 1;
+    $holidayShift.value = task ? task.holidayShift : 'before';
+    updateModalFields();
+    $modalOverlay.classList.add('active');
+    $taskName.focus();
+  }
+
+  function hideModal() {
+    $modalOverlay.classList.remove('active');
+    editingTaskId = null;
+  }
+
+  // ========== イベント ==========
+  document.getElementById('prev-month-btn').addEventListener('click', () => {
+    currentMonth--;
+    if (currentMonth < 1) { currentMonth = 12; currentYear--; }
+    renderMonthLabel();
+    renderTable();
+  });
+
+  document.getElementById('next-month-btn').addEventListener('click', () => {
+    currentMonth++;
+    if (currentMonth > 12) { currentMonth = 1; currentYear++; }
+    renderMonthLabel();
+    renderTable();
+  });
+
+  document.getElementById('today-btn').addEventListener('click', () => {
+    const now = new Date();
+    currentYear = now.getFullYear();
+    currentMonth = now.getMonth() + 1;
+    renderMonthLabel();
+    renderTable();
+  });
+
+  document.getElementById('add-task-btn').addEventListener('click', () => showModal(null));
+
+  document.getElementById('export-btn').addEventListener('click', exportData);
+  document.getElementById('import-file').addEventListener('change', (e) => {
+    if (e.target.files[0]) importData(e.target.files[0]);
+    e.target.value = '';
+  });
+
+  $dueType.addEventListener('change', updateModalFields);
+
+  document.getElementById('save-task-btn').addEventListener('click', () => {
+    const name = $taskName.value.trim();
+    if (!name) { alert('タスク名を入力してください'); return; }
+    const dueValue = parseInt($dueValue.value);
+    if (isNaN(dueValue) || dueValue < 1) { alert('期限値を正しく入力してください'); return; }
+
+    if (editingTaskId) {
+      const task = tasks.find(t => t.id === editingTaskId);
+      if (task) {
+        task.name = name;
+        task.dueType = $dueType.value;
+        task.dueValue = dueValue;
+        task.holidayShift = $holidayShift.value;
+      }
+    } else {
+      tasks.push({
+        id: 'task_' + Date.now(),
+        name,
+        dueType: $dueType.value,
+        dueValue,
+        holidayShift: $holidayShift.value,
+        completions: {}
+      });
+    }
+
+    saveTasks(tasks);
+    hideModal();
+    renderTable();
+  });
+
+  document.getElementById('cancel-task-btn').addEventListener('click', hideModal);
+
+  $modalOverlay.addEventListener('click', (e) => {
+    if (e.target === $modalOverlay) hideModal();
+  });
+
+  // グローバルAPI（onclickから呼び出し用）
+  window.app = {
+    toggleCompletion(taskId, dateStr) {
+      const task = tasks.find(t => t.id === taskId);
+      if (!task) return;
+      if (!task.completions) task.completions = {};
+      if (task.completions[dateStr]) {
+        delete task.completions[dateStr];
+      } else {
+        task.completions[dateStr] = true;
+      }
+      saveTasks(tasks);
+      renderTable();
+    },
+
+    editTask(taskId) {
+      const task = tasks.find(t => t.id === taskId);
+      if (task) showModal(task);
+    },
+
+    deleteTask(taskId) {
+      if (!confirm('このタスクを削除しますか？')) return;
+      tasks = tasks.filter(t => t.id !== taskId);
+      saveTasks(tasks);
+      renderTable();
+    }
+  };
+
+  // ========== 初期化 ==========
+  function init() {
+    tasks = loadTasks();
+    renderMonthLabel();
+    renderTable();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
